@@ -1,0 +1,13 @@
+# U-Boot uEnv.txt for Antminer S19J Control Board v2.5
+# Auto-boots Buildroot Linux 6.6 from SD card
+
+bootcmd=run uenvcmd
+bootdir=
+bootfile=zimage
+fdtfile=antminer.dtb
+loadaddr=0x80008000
+fdtaddr=0x88000000
+
+mmcargs=setenv bootargs console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x44e09000 root=/dev/mmcblk0p2 rw rootwait
+
+uenvcmd=echo Loading Buildroot Linux 6.6 for Antminer S19J...; run mmcargs; fatload mmc 0:1 ${loadaddr} ${bootfile}; fatload mmc 0:1 ${fdtaddr} ${fdtfile}; bootz ${loadaddr} - ${fdtaddr}

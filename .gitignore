@@ -1,0 +1,18 @@
+# Buildroot source tree and output (downloaded & generated)
+buildroot-*/
+buildroot.tar.gz
+
+# Generated build artifacts and disk images
+images/*.img
+images/*.ext4
+images/*.vfat
+images/zImage
+images/uImage
+images/*.dtb
+images/boot.scr
+
+# Temporary scratch files
+*.log
+scratch/
+__pycache__/
+.DS_Store
