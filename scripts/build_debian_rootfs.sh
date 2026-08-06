@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==========================================================================
 # Debian 12 (Bookworm) ARMhf RootFS Builder for Antminer S19J (TI AM335x)
-# Requires: debootstrap, qemu-user-static, e2fsprogs, python3
+# Requires: debootstrap, qemu-user-static, binfmt-support, e2fsprogs, python3
 # ==========================================================================
 
 set -e
@@ -30,10 +30,14 @@ echo " Target OS:    Debian 12 Bookworm"
 echo " Output:       ${ROOTFS_IMG}"
 echo "=========================================================="
 
-# Step 1: Install prerequisite host packages
+# Step 1: Install prerequisite host packages & enable QEMU ARM binfmt
 echo ">>> [1/6] Installing build host prerequisites..."
 apt-get update -qq
-apt-get install -y -qq debootstrap qemu-user-static e2fsprogs mtools parted openssl python3
+apt-get install -y -qq debootstrap qemu-user-static binfmt-support e2fsprogs mtools parted openssl python3
+
+echo ">>> Enabling QEMU ARM binfmt interpreter for chroot ARM execution..."
+update-binfmts --enable qemu-arm 2>/dev/null || true
+service binfmt-support start 2>/dev/null || true
 
 # Step 2: Debootstrap Stage 1 & Stage 2
 echo ">>> [2/6] Running debootstrap for Debian 12 Bookworm (armhf)..."
@@ -43,7 +47,7 @@ rm -rf "${ROOTFS_DIR}"
 debootstrap --foreign --arch=armhf bookworm "${ROOTFS_DIR}" http://deb.debian.org/debian/
 
 # Copy QEMU static emulator for ARM target execution
-cp /usr/bin/qemu-arm-static "${ROOTFS_DIR}/usr/bin/"
+cp /usr/bin/qemu-arm-static "${ROOTFS_DIR}/usr/bin/" 2>/dev/null || cp /usr/libexec/qemu-binfmt/arm-binfmt-P "${ROOTFS_DIR}/usr/bin/qemu-arm-static" 2>/dev/null || true
 
 echo ">>> Completing Debian Stage 2 inside QEMU chroot..."
 chroot "${ROOTFS_DIR}" /debootstrap/debootstrap --second-stage
