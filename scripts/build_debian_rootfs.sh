@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==========================================================================
 # Debian 12 (Bookworm) ARMhf RootFS Builder for Antminer S19J (TI AM335x)
-# Requires: debootstrap, qemu-user-static, e2fsprogs
+# Requires: debootstrap, qemu-user-static, e2fsprogs, python3
 # ==========================================================================
 
 set -e
@@ -33,7 +33,7 @@ echo "=========================================================="
 # Step 1: Install prerequisite host packages
 echo ">>> [1/6] Installing build host prerequisites..."
 apt-get update -qq
-apt-get install -y -qq debootstrap qemu-user-static e2fsprogs mtools parted openssl
+apt-get install -y -qq debootstrap qemu-user-static e2fsprogs mtools parted openssl python3
 
 # Step 2: Debootstrap Stage 1 & Stage 2
 echo ">>> [2/6] Running debootstrap for Debian 12 Bookworm (armhf)..."
@@ -112,7 +112,7 @@ sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_c
 # Enable systemd serial getty on ttyS0
 systemctl enable serial-getty@ttyS0.service
 
-# Clean apt cache
+# Clean apt cache to reduce image size
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/*
 EOF
@@ -131,13 +131,18 @@ exit 0
 EOF
 chmod +x "${ROOTFS_DIR}/etc/rc.local"
 
-# Step 6: Create 100MB EXT4 RootFS Image
+# Step 6: Create dynamically-sized EXT4 RootFS Image
 echo ">>> [5/6] Building EXT4 rootfs image..."
 mkdir -p "${IMAGES_DIR}"
 rm -f "${ROOTFS_IMG}"
 
-# Create 100MB blank image file
-dd if=/dev/zero of="${ROOTFS_IMG}" bs=1M count=100
+# Calculate required size dynamically (actual size + 350MB free working space for user apt installs)
+ACTUAL_SIZE_MB=$(du -sm "${ROOTFS_DIR}" | cut -f1)
+REQUIRED_SIZE_MB=$((ACTUAL_SIZE_MB + 350))
+echo "  Target RootFS content: ${ACTUAL_SIZE_MB} MB -> Creating ${REQUIRED_SIZE_MB} MB ext4 image..."
+
+# Create dynamically-sized blank image file
+dd if=/dev/zero of="${ROOTFS_IMG}" bs=1M count="${REQUIRED_SIZE_MB}"
 mkfs.ext4 -F -L "rootfs" "${ROOTFS_IMG}"
 
 # Copy files into ext4 image
@@ -147,19 +152,18 @@ mount -o loop "${ROOTFS_IMG}" "${MOUNT_TMP}"
 cp -a "${ROOTFS_DIR}/"* "${MOUNT_TMP}/"
 umount "${MOUNT_TMP}"
 
-# Step 7: Update sdcard.img with new Debian RootFS
-echo ">>> [6/6] Updating sdcard.img Partition 2 with Debian 12 RootFS..."
-if [ -f "${IMAGES_DIR}/sdcard.img" ]; then
-    dd if="${ROOTFS_IMG}" of="${IMAGES_DIR}/sdcard.img" bs=1M seek=33 conv=notrunc
-fi
+# Step 7: Update sdcard.img with new Debian RootFS using make_sdcard_img.py
+echo ">>> [6/6] Bundling sdcard.img..."
+python3 "${SCRIPT_DIR}/make_sdcard_img.py"
 
 echo ""
 echo "=========================================================="
 echo " DEBIAN 12 (BOOKWORM) ROOTFS BUILD SUCCESSFUL!"
 echo "=========================================================="
-echo " Image:    ${ROOTFS_IMG}"
-echo " Package:  apt / apt-get enabled"
-echo " Serial:   ttyS0 (115200 8N1)"
-echo " Network:  Auto-DHCP eth0"
-echo " Access:   root / root (SSH & Serial)"
+echo " RootFS Image: ${ROOTFS_IMG} (${REQUIRED_SIZE_MB} MB)"
+echo " SD Card Image: ${IMAGES_DIR}/sdcard.img"
+echo " Package:      apt / apt-get enabled"
+echo " Serial:       ttyS0 (115200 8N1)"
+echo " Network:      Auto-DHCP eth0"
+echo " Access:       root / root (SSH & Serial)"
 echo "=========================================================="

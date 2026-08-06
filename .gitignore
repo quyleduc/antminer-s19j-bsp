@@ -11,7 +11,8 @@ images/uImage
 images/*.dtb
 images/boot.scr
 
-# Temporary scratch files
+# Temporary scratch files and build dirs
+build_debian/
 *.log
 scratch/
 __pycache__/
