@@ -15,6 +15,7 @@ BUILD_DIR="${PROJECT_DIR}/build_debian"
 IMAGES_DIR="${PROJECT_DIR}/images"
 ROOTFS_DIR="${BUILD_DIR}/rootfs"
 ROOTFS_IMG="${IMAGES_DIR}/rootfs.ext4"
+VFAT_IMG="${IMAGES_DIR}/boot.vfat"
 
 # Check root privilege for debootstrap/mount
 if [ "$(id -u)" -ne 0 ]; then
@@ -31,7 +32,7 @@ echo " Output:       ${ROOTFS_IMG}"
 echo "=========================================================="
 
 # Step 1: Install prerequisite host packages & enable QEMU ARM binfmt
-echo ">>> [1/6] Installing build host prerequisites..."
+echo ">>> [1/7] Installing build host prerequisites..."
 apt-get update -qq
 apt-get install -y -qq debootstrap qemu-user-static binfmt-support e2fsprogs mtools parted openssl python3
 
@@ -40,7 +41,7 @@ update-binfmts --enable qemu-arm 2>/dev/null || true
 service binfmt-support start 2>/dev/null || true
 
 # Step 2: Debootstrap Stage 1 & Stage 2
-echo ">>> [2/6] Running debootstrap for Debian 12 Bookworm (armhf)..."
+echo ">>> [2/7] Running debootstrap for Debian 12 Bookworm (armhf)..."
 mkdir -p "${BUILD_DIR}"
 rm -rf "${ROOTFS_DIR}"
 
@@ -53,7 +54,7 @@ echo ">>> Completing Debian Stage 2 inside QEMU chroot..."
 chroot "${ROOTFS_DIR}" /debootstrap/debootstrap --second-stage
 
 # Step 3: Configure Target Debian System
-echo ">>> [3/6] Configuring target system (packages, hostname, serial)..."
+echo ">>> [3/7] Configuring target system (packages, hostname, serial)..."
 
 # Set Hostname
 echo "antminer-s19j" > "${ROOTFS_DIR}/etc/hostname"
@@ -77,7 +78,7 @@ iface eth0 inet dhcp
 EOF
 
 # Step 4: Run chroot configuration for packages & root password
-echo ">>> [4/6] Installing essential Debian packages & enabling SSH..."
+echo ">>> [4/7] Installing essential Debian packages & enabling SSH..."
 
 cat > "${ROOTFS_DIR}/tmp/setup.sh" << 'EOF'
 #!/bin/bash
@@ -136,7 +137,7 @@ EOF
 chmod +x "${ROOTFS_DIR}/etc/rc.local"
 
 # Step 6: Create dynamically-sized EXT4 RootFS Image
-echo ">>> [5/6] Building EXT4 rootfs image..."
+echo ">>> [5/7] Building EXT4 rootfs image..."
 mkdir -p "${IMAGES_DIR}"
 rm -f "${ROOTFS_IMG}"
 
@@ -156,8 +157,33 @@ mount -o loop "${ROOTFS_IMG}" "${MOUNT_TMP}"
 cp -a "${ROOTFS_DIR}/"* "${MOUNT_TMP}/"
 umount "${MOUNT_TMP}"
 
-# Step 7: Update sdcard.img with new Debian RootFS using make_sdcard_img.py
-echo ">>> [6/6] Bundling sdcard.img..."
+# Step 7: Build FAT32 boot partition (boot.vfat) with zImage, DTB, uEnv.txt
+echo ">>> [6/7] Building FAT32 Boot Partition (boot.vfat)..."
+rm -f "${VFAT_IMG}"
+dd if=/dev/zero of="${VFAT_IMG}" bs=1M count=32
+mkfs.fat -F 32 -n 'BOOT' "${VFAT_IMG}"
+mmd -i "${VFAT_IMG}" ::/boot 2>/dev/null || true
+
+# Copy uEnv.txt from board config if missing in images
+if [ ! -f "${IMAGES_DIR}/uEnv.txt" ]; then
+    cp "${PROJECT_DIR}/board/bitmain/antminer-s19j/uEnv.txt" "${IMAGES_DIR}/uEnv.txt"
+fi
+
+[ -f "${IMAGES_DIR}/zImage" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/zImage" ::/zImage
+[ -f "${IMAGES_DIR}/uImage" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/uImage" ::/uImage
+[ -f "${IMAGES_DIR}/uImage" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/uImage" ::/boot/uImage
+[ -f "${IMAGES_DIR}/boot.scr" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/boot.scr" ::/boot.scr
+[ -f "${IMAGES_DIR}/uEnv.txt" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/uEnv.txt" ::/uEnv.txt
+
+if [ -f "${IMAGES_DIR}/am335x-antminer.dtb" ]; then
+    mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/am335x-antminer.dtb" ::/am335x-boneblack.dtb
+    mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/am335x-antminer.dtb" ::/boot/am335x-boneblack.dtb
+    mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/am335x-antminer.dtb" ::/am335x.dtb
+    mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/am335x-antminer.dtb" ::/antminer.dtb
+fi
+
+# Step 8: Update sdcard.img with Partition 1 (FAT32) & Partition 2 (EXT4)
+echo ">>> [7/7] Bundling sdcard.img..."
 python3 "${SCRIPT_DIR}/make_sdcard_img.py"
 
 echo ""
