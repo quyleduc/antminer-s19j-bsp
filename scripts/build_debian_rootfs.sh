@@ -161,10 +161,10 @@ mount -o loop "${ROOTFS_IMG}" "${MOUNT_TMP}"
 cp -a "${ROOTFS_DIR}/"* "${MOUNT_TMP}/"
 umount "${MOUNT_TMP}"
 
-# Step 7: Build FAT32 boot partition (boot.vfat) with zImage, DTB, uEnv.txt
-echo ">>> [6/7] Building FAT32 Boot Partition (boot.vfat)..."
+# Step 7: Build 64MB FAT32 boot partition (boot.vfat) with zImage, DTB, uEnv.txt
+echo ">>> [6/7] Building 64MB FAT32 Boot Partition (boot.vfat)..."
 rm -f "${VFAT_IMG}"
-dd if=/dev/zero of="${VFAT_IMG}" bs=1M count=32
+dd if=/dev/zero of="${VFAT_IMG}" bs=1M count=64
 mkfs.fat -F 32 -n 'BOOT' "${VFAT_IMG}"
 mmd -i "${VFAT_IMG}" ::/boot 2>/dev/null || true
 

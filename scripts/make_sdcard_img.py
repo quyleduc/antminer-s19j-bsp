@@ -56,8 +56,8 @@ def main():
     ext4_sectors = (ext4_size + 511) // 512
 
     fat_start_sec = 2048           # 1MB offset
-    fat_size_sec = 65536           # 32MB FAT32 partition
-    ext_start_sec = fat_start_sec + fat_size_sec # Sector 67584
+    fat_size_sec = 131072          # 64MB FAT32 partition (minimum compliant size for FAT32 spec)
+    ext_start_sec = fat_start_sec + fat_size_sec # Sector 133120
     ext_size_sec = ext4_sectors
 
     total_sectors = ext_start_sec + ext_size_sec
