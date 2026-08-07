@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Python script to bundle FAT32 boot + EXT4 rootfs into a single sdcard.img
-for BalenaEtcher / Rufus / Win32DiskImager on Windows.
+for BalenaEtcher / Rufus / Win32DiskImager on Windows & Linux.
 Uses absolute path resolution derived from script location.
 """
 
@@ -45,6 +45,7 @@ def main():
     images_dir = os.path.abspath(os.path.join(project_dir, "images"))
 
     ext4_path = os.path.abspath(os.path.join(images_dir, "rootfs.ext4"))
+    vfat_path = os.path.abspath(os.path.join(images_dir, "boot.vfat"))
     sdcard_path = os.path.abspath(os.path.join(images_dir, "sdcard.img"))
 
     if not os.path.exists(ext4_path):
@@ -55,8 +56,8 @@ def main():
     ext4_sectors = (ext4_size + 511) // 512
 
     fat_start_sec = 2048           # 1MB offset
-    fat_size_sec = 65536           # 32MB FAT32 partition
-    ext_start_sec = fat_start_sec + fat_size_sec # Sector 67584
+    fat_size_sec = 131072          # 64MB FAT32 partition (minimum compliant size for FAT32 spec)
+    ext_start_sec = fat_start_sec + fat_size_sec # Sector 133120
     ext_size_sec = ext4_sectors
 
     total_sectors = ext_start_sec + ext_size_sec
@@ -67,20 +68,31 @@ def main():
     print(f"  FAT32 Boot: Sector {fat_start_sec} ({fat_size_sec * 512 / (1024*1024):.1f} MB)")
     print(f"  EXT4 RootFS: Sector {ext_start_sec} ({ext_size_sec * 512 / (1024*1024):.1f} MB)")
 
-    # 1. Create empty file with MBR
     with open(sdcard_path, "wb") as f:
+        # Write MBR at sector 0
         mbr = create_mbr(fat_start_sec, fat_size_sec, ext_start_sec, ext_size_sec)
         f.write(mbr)
+        
         # Pad to FAT32 start
         f.seek(fat_start_sec * 512 - 1)
         f.write(b"\x00")
 
-        # Write EXT4 rootfs directly at sector ext_start_sec
+        # Write FAT32 Boot Partition (Partition 1)
+        if os.path.exists(vfat_path):
+            f.seek(fat_start_sec * 512)
+            with open(vfat_path, "rb") as vfat_f:
+                shutil.copyfileobj(vfat_f, f)
+            print(f"  -> Wrote Partition 1: boot.vfat ({os.path.getsize(vfat_path) / (1024*1024):.1f} MB)")
+        else:
+            print("  WARNING: boot.vfat not found, Partition 1 will be empty!")
+
+        # Write EXT4 RootFS Partition (Partition 2)
         f.seek(ext_start_sec * 512)
         with open(ext4_path, "rb") as ext_f:
             shutil.copyfileobj(ext_f, f)
+        print(f"  -> Wrote Partition 2: rootfs.ext4 ({ext4_size / (1024*1024):.1f} MB)")
 
-    print(f"SUCCESS: {sdcard_path} generated!")
+    print(f"\nSUCCESS: {sdcard_path} generated successfully!")
 
 if __name__ == "__main__":
     main()
