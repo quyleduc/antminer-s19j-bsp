@@ -93,6 +93,8 @@ SOURCES
 
 apt-get update -qq
 apt-get install -y -qq \
+    isc-dhcp-client \
+    ifupdown \
     openssh-server \
     sudo \
     curl \
