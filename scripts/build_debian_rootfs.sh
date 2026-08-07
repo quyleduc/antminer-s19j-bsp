@@ -95,6 +95,7 @@ apt-get update -qq
 apt-get install -y -qq \
     isc-dhcp-client \
     ifupdown \
+    systemd-timesyncd \
     openssh-server \
     sudo \
     curl \
@@ -116,8 +117,9 @@ echo "root:root" | chpasswd
 sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
-# Enable systemd serial getty on ttyS0
+# Enable systemd serial getty & NTP time sync
 systemctl enable serial-getty@ttyS0.service
+systemctl enable systemd-timesyncd.service
 
 # Clean apt cache to reduce image size
 apt-get clean
