@@ -6,7 +6,7 @@
 
 set -e
 
-# Sanitize PATH for WSL (Removes Windows paths containing spaces/tabs)
+# Sanitize PATH for WSL & CI (Removes Windows paths containing spaces/tabs)
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 BUILDROOT_VERSION="2025.02"
@@ -146,14 +146,15 @@ log_step "4/6" "Copying custom Device Tree & board files..."
 mkdir -p "${BUILDROOT_DIR}/board/bitmain/antminer-s19j"
 cp -r "${PROJECT_DIR}/board/bitmain/antminer-s19j/"* "${BUILDROOT_DIR}/board/bitmain/antminer-s19j/"
 
+# Trigger linux-extract so kernel source tree is prepared on clean builds
+echo "  Extracting Linux Kernel sources..."
+make -C "${BUILDROOT_DIR}" linux-extract
+
 # Linux 6.6 stores TI AM335x DTS files under arch/arm/boot/dts/ti/omap/
 KERNEL_DTS_DIR="${BUILDROOT_DIR}/output/build/linux-6.6.58/arch/arm/boot/dts"
-if [ -d "${KERNEL_DTS_DIR}" ]; then
-    # Purge stale DTS/DTB from root dts folder so kernel only targets ti/omap/
-    rm -f "${KERNEL_DTS_DIR}/am335x-antminer.dts"* "${KERNEL_DTS_DIR}/am335x-antminer.dtb"*
-    mkdir -p "${KERNEL_DTS_DIR}/ti/omap"
-    cp "${PROJECT_DIR}/board/bitmain/antminer-s19j/am335x-antminer.dts" "${KERNEL_DTS_DIR}/ti/omap/am335x-antminer.dts"
-fi
+mkdir -p "${KERNEL_DTS_DIR}/ti/omap"
+cp "${PROJECT_DIR}/board/bitmain/antminer-s19j/am335x-antminer.dts" "${KERNEL_DTS_DIR}/ti/omap/am335x-antminer.dts"
+echo "  -> Installed custom am335x-antminer.dts into kernel arch/arm/boot/dts/ti/omap/"
 
 # --------------------------------------------------------------------------
 # Step 5: Build with Buildroot
@@ -172,7 +173,13 @@ mkdir -p "${IMAGES_DIR}"
 
 # Copy outputs from Buildroot
 cp "${BUILDROOT_DIR}/output/images/zImage" "${IMAGES_DIR}/zImage" 2>/dev/null || true
-cp "${BUILDROOT_DIR}/output/images/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb" 2>/dev/null || true
+
+if [ -f "${BUILDROOT_DIR}/output/images/am335x-antminer.dtb" ]; then
+    cp "${BUILDROOT_DIR}/output/images/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb"
+elif [ -f "${BUILDROOT_DIR}/output/images/ti/omap/am335x-antminer.dtb" ]; then
+    cp "${BUILDROOT_DIR}/output/images/ti/omap/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb"
+fi
+
 cp "${BUILDROOT_DIR}/output/images/rootfs.ext4" "${IMAGES_DIR}/rootfs.ext4" 2>/dev/null || \
    cp "${BUILDROOT_DIR}/output/images/rootfs.ext2" "${IMAGES_DIR}/rootfs.ext4" 2>/dev/null || true
 
