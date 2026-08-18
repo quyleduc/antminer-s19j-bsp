@@ -9,6 +9,7 @@ import os
 import struct
 import shutil
 
+
 def create_mbr(fat_start_sec, fat_size_sec, ext_start_sec, ext_size_sec):
     mbr = bytearray(512)
     # Magic bytes
@@ -39,6 +40,7 @@ def create_mbr(fat_start_sec, fat_size_sec, ext_start_sec, ext_size_sec):
 
     return mbr
 
+
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.abspath(os.path.join(script_dir, ".."))
@@ -56,23 +58,28 @@ def main():
     ext4_sectors = (ext4_size + 511) // 512
 
     fat_start_sec = 2048           # 1MB offset
-    fat_size_sec = 131072          # 64MB FAT32 partition (minimum compliant size for FAT32 spec)
-    ext_start_sec = fat_start_sec + fat_size_sec # Sector 133120
+    fat_size_sec = 131072          # 64MB FAT32 partition
+    ext_start_sec = fat_start_sec + fat_size_sec  # Sector 133120
     ext_size_sec = ext4_sectors
 
     total_sectors = ext_start_sec + ext_size_sec
     total_bytes = total_sectors * 512
+    total_mb = total_bytes / (1024 * 1024)
+    fat_mb = fat_size_sec * 512 / (1024 * 1024)
+    ext_mb = ext_size_sec * 512 / (1024 * 1024)
 
     print(f"Creating MBR disk image: {sdcard_path}")
-    print(f"  Total size: {total_bytes / (1024*1024):.2f} MB")
-    print(f"  FAT32 Boot: Sector {fat_start_sec} ({fat_size_sec * 512 / (1024*1024):.1f} MB)")
-    print(f"  EXT4 RootFS: Sector {ext_start_sec} ({ext_size_sec * 512 / (1024*1024):.1f} MB)")
+    print(f"  Total size: {total_mb:.2f} MB")
+    print(f"  FAT32 Boot: Sector {fat_start_sec} ({fat_mb:.1f} MB)")
+    print(f"  EXT4 RootFS: Sector {ext_start_sec} ({ext_mb:.1f} MB)")
 
     with open(sdcard_path, "wb") as f:
         # Write MBR at sector 0
-        mbr = create_mbr(fat_start_sec, fat_size_sec, ext_start_sec, ext_size_sec)
+        mbr = create_mbr(
+            fat_start_sec, fat_size_sec, ext_start_sec, ext_size_sec
+        )
         f.write(mbr)
-        
+
         # Pad to FAT32 start
         f.seek(fat_start_sec * 512 - 1)
         f.write(b"\x00")
@@ -82,7 +89,8 @@ def main():
             f.seek(fat_start_sec * 512)
             with open(vfat_path, "rb") as vfat_f:
                 shutil.copyfileobj(vfat_f, f)
-            print(f"  -> Wrote Partition 1: boot.vfat ({os.path.getsize(vfat_path) / (1024*1024):.1f} MB)")
+            vfat_mb = os.path.getsize(vfat_path) / (1024 * 1024)
+            print(f"  -> Wrote Partition 1: boot.vfat ({vfat_mb:.1f} MB)")
         else:
             print("  WARNING: boot.vfat not found, Partition 1 will be empty!")
 
@@ -90,9 +98,11 @@ def main():
         f.seek(ext_start_sec * 512)
         with open(ext4_path, "rb") as ext_f:
             shutil.copyfileobj(ext_f, f)
-        print(f"  -> Wrote Partition 2: rootfs.ext4 ({ext4_size / (1024*1024):.1f} MB)")
+        rootfs_mb = ext4_size / (1024 * 1024)
+        print(f"  -> Wrote Partition 2: rootfs.ext4 ({rootfs_mb:.1f} MB)")
 
     print(f"\nSUCCESS: {sdcard_path} generated successfully!")
+
 
 if __name__ == "__main__":
     main()
