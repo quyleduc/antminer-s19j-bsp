@@ -22,6 +22,9 @@ on:
           - buildroot
           - debian
 
+env:
+  DEBIAN_FRONTEND: noninteractive
+
 jobs:
   # =========================================================================
   # Quality Gate: Static Analysis & Validation
@@ -33,19 +36,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install validation tools
+      - name: Setup Python & Lint Tools
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck device-tree-compiler python3-flake8
+          python3 -m pip install --no-cache-dir flake8
 
       - name: Lint Shell Scripts (shellcheck)
         run: |
-          echo ">>> Checking shell scripts..."
+          echo ">>> Checking shell scripts with shellcheck..."
           shellcheck -e SC1090,SC1091,SC2086 scripts/*.sh
 
       - name: Lint Python Scripts (flake8 & syntax)
         run: |
-          echo ">>> Checking Python scripts..."
+          echo ">>> Checking Python scripts with flake8..."
           python3 -m py_compile scripts/*.py
           flake8 --max-line-length=120 --ignore=E501,W503,E402 scripts/*.py
 
