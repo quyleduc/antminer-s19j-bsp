@@ -1,0 +1,222 @@
+name: CI & Embedded Linux Image Builder
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Target image to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - buildroot
+          - debian
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  # =========================================================================
+  # Quality Gate: Static Analysis & Validation
+  # =========================================================================
+  validate-and-lint:
+    name: Lint & Validation Quality Gate
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python & Lint Tools
+        run: |
+          python3 -m pip install --no-cache-dir flake8
+
+      - name: Lint Shell Scripts (shellcheck)
+        run: |
+          echo ">>> Checking shell scripts with shellcheck..."
+          shellcheck -e SC1090,SC1091,SC2086,SC2016 scripts/*.sh
+
+      - name: Lint Python Scripts (flake8 & syntax)
+        run: |
+          echo ">>> Checking Python scripts with flake8..."
+          python3 -m py_compile scripts/*.py
+          flake8 --max-line-length=120 --ignore=E501,W503,E402 scripts/*.py
+
+      - name: Validate Defconfig and Board Structure
+        run: |
+          echo ">>> Validating BSP configuration..."
+          test -f configs/antminer_s19j_defconfig || (echo "ERROR: defconfig missing" && exit 1)
+          test -f board/bitmain/antminer-s19j/am335x-antminer.dts || (echo "ERROR: DTS missing" && exit 1)
+          test -f board/bitmain/antminer-s19j/uEnv.txt || (echo "ERROR: uEnv.txt missing" && exit 1)
+          echo "BSP structure valid."
+
+  # =========================================================================
+  # Buildroot BSP & Kernel 6.6 Image Builder
+  # =========================================================================
+  build-buildroot:
+    name: Build Buildroot 2025.02 Image
+    needs: validate-and-lint
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'buildroot' || github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential libssl-dev wget git bc cpio rsync \
+            unzip libncurses-dev python3 mtools dosfstools xz-utils \
+            bison flex libelf-dev
+
+      - name: Cache Buildroot Downloads (dl/ folder)
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: buildroot-dl-${{ hashFiles('configs/antminer_s19j_defconfig') }}
+          restore-keys: |
+            buildroot-dl-
+
+      - name: Build Buildroot BSP & Linux Kernel 6.6
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build.sh
+
+      - name: Compress Buildroot SD Card Image
+        run: |
+          cd images
+          xz -T0 -6 -k sdcard.img
+          mv sdcard.img.xz antminer-s19j-buildroot-sdcard.img.xz
+          sha256sum antminer-s19j-buildroot-sdcard.img.xz zImage am335x-antminer.dtb > SHA256SUMS-buildroot.txt
+          cat SHA256SUMS-buildroot.txt
+
+      - name: Upload Buildroot Kernel & DTB Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: antminer-s19j-kernel-and-dtb
+          path: |
+            images/zImage
+            images/am335x-antminer.dtb
+            images/uEnv.txt
+          retention-days: 14
+
+      - name: Upload Buildroot Flashable Disk Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: antminer-s19j-buildroot-image
+          path: |
+            images/antminer-s19j-buildroot-sdcard.img.xz
+            images/SHA256SUMS-buildroot.txt
+          retention-days: 14
+
+  # =========================================================================
+  # Debian 12 (Bookworm) ARMhf RootFS Image Builder
+  # =========================================================================
+  build-debian:
+    name: Build Debian 12 (Bookworm) Image
+    needs: [validate-and-lint, build-buildroot]
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'debian' || github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Kernel & DTB Artifacts from Buildroot job
+        uses: actions/download-artifact@v4
+        with:
+          name: antminer-s19j-kernel-and-dtb
+          path: images
+
+      - name: Install Debian rootfs prerequisites & QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            debootstrap qemu-user-static binfmt-support \
+            e2fsprogs mtools parted dosfstools python3 xz-utils
+
+      - name: Build Debian 12 ARMhf RootFS & Disk Image
+        run: |
+          chmod +x scripts/*.sh
+          sudo ./scripts/build_debian_rootfs.sh
+
+      - name: Compress Debian 12 SD Card Image
+        run: |
+          cd images
+          sudo chown -R $(id -u):$(id -g) .
+          xz -T0 -6 -k sdcard.img
+          mv sdcard.img.xz antminer-s19j-debian12-sdcard.img.xz
+          sha256sum antminer-s19j-debian12-sdcard.img.xz > SHA256SUMS-debian12.txt
+          cat SHA256SUMS-debian12.txt
+
+      - name: Upload Debian 12 Flashable Disk Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: antminer-s19j-debian12-image
+          path: |
+            images/antminer-s19j-debian12-sdcard.img.xz
+            images/SHA256SUMS-debian12.txt
+          retention-days: 14
+
+  # =========================================================================
+  # Automatic Release Deployment on Git Tags
+  # =========================================================================
+  release:
+    name: Publish Release Artifacts
+    needs: [build-buildroot, build-debian]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download Buildroot artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: antminer-s19j-buildroot-image
+          path: release-artifacts
+
+      - name: Download Debian artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: antminer-s19j-debian12-image
+          path: release-artifacts
+
+      - name: Download Kernel & DTB artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: antminer-s19j-kernel-and-dtb
+          path: release-artifacts
+
+      - name: Generate Consolidated SHA256 Checksums
+        run: |
+          cd release-artifacts
+          sha256sum antminer-s19j-buildroot-sdcard.img.xz \
+                    antminer-s19j-debian12-sdcard.img.xz \
+                    zImage \
+                    am335x-antminer.dtb > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/antminer-s19j-buildroot-sdcard.img.xz
+            release-artifacts/antminer-s19j-debian12-sdcard.img.xz
+            release-artifacts/zImage
+            release-artifacts/am335x-antminer.dtb
+            release-artifacts/SHA256SUMS.txt
+          name: Antminer S19J Linux 6.6 BSP ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true

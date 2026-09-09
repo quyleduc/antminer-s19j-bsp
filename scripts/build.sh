@@ -6,12 +6,13 @@
 
 set -e
 
-# Sanitize PATH for WSL (Removes Windows paths containing spaces/tabs)
+# Sanitize PATH for WSL & CI (Removes Windows paths containing spaces/tabs)
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 BUILDROOT_VERSION="2025.02"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILDROOT_DIR="${PROJECT_DIR}/buildroot-${BUILDROOT_VERSION}"
+IMAGES_DIR="${PROJECT_DIR}/images"
 
 # --------------------------------------------------------------------------
 # Helper Functions
@@ -25,7 +26,7 @@ log_step() {
 
 check_dependencies() {
     local missing=()
-    for cmd in make gcc g++ wget tar bc cpio rsync sed; do
+    for cmd in make gcc g++ wget tar bc cpio rsync sed python3 mtools mkfs.fat; do
         if ! command -v "$cmd" &>/dev/null; then
             missing+=("$cmd")
         fi
@@ -39,7 +40,7 @@ check_dependencies() {
     if [ ${#missing[@]} -gt 0 ]; then
         echo "ERROR: Missing required tools or headers: ${missing[*]}"
         echo "Install them with:"
-        echo "  sudo apt update && sudo apt install -y build-essential libssl-dev wget git bc cpio rsync unzip libncurses-dev"
+        echo "  sudo apt update && sudo apt install -y build-essential libssl-dev wget git bc cpio rsync unzip libncurses-dev python3 mtools dosfstools"
         exit 1
     fi
 }
@@ -84,17 +85,21 @@ echo "=========================================================="
 # --------------------------------------------------------------------------
 
 if [ ! -d "${BUILDROOT_DIR}" ]; then
-    log_step "1/5" "Downloading Buildroot ${BUILDROOT_VERSION}..."
+    log_step "1/6" "Downloading Buildroot ${BUILDROOT_VERSION}..."
     wget -c "https://buildroot.org/downloads/buildroot-${BUILDROOT_VERSION}.tar.gz" \
          -O "${PROJECT_DIR}/buildroot.tar.gz"
 
-    log_step "1/5" "Extracting Buildroot..."
+    log_step "1/6" "Extracting Buildroot..."
     tar -xzf "${PROJECT_DIR}/buildroot.tar.gz" -C "${PROJECT_DIR}" --no-same-owner \
         || tar -xzf "${PROJECT_DIR}/buildroot.tar.gz" -C "${PROJECT_DIR}"
     rm -f "${PROJECT_DIR}/buildroot.tar.gz"
 else
-    log_step "1/5" "Buildroot already extracted, skipping download."
+    log_step "1/6" "Buildroot already extracted, skipping download."
 fi
+
+# Link download directory to persist Buildroot package cache across builds
+mkdir -p "${PROJECT_DIR}/dl"
+ln -sfn "${PROJECT_DIR}/dl" "${BUILDROOT_DIR}/dl"
 
 cd "${BUILDROOT_DIR}"
 
@@ -102,7 +107,7 @@ cd "${BUILDROOT_DIR}"
 # Step 2: Apply GCC version-specific patches (GLOBAL fix for ALL host pkgs)
 # --------------------------------------------------------------------------
 
-log_step "2/5" "Checking host GCC compatibility..."
+log_step "2/6" "Checking host GCC compatibility..."
 
 if [ -n "${GCC_VER}" ] && [ "${GCC_VER}" -ge 14 ] 2>/dev/null; then
     echo "  GCC ${GCC_VER} detected (C23 default) -> Applying GLOBAL host CFLAGS patch"
@@ -132,7 +137,7 @@ fi
 # Step 3: Apply Buildroot defconfig
 # --------------------------------------------------------------------------
 
-log_step "3/5" "Applying Antminer S19J defconfig..."
+log_step "3/6" "Applying Antminer S19J defconfig..."
 mkdir -p "${BUILDROOT_DIR}/configs"
 cp "${PROJECT_DIR}/configs/antminer_s19j_defconfig" "${BUILDROOT_DIR}/configs/antminer_s19j_defconfig"
 make -C "${BUILDROOT_DIR}" antminer_s19j_defconfig
@@ -141,26 +146,103 @@ make -C "${BUILDROOT_DIR}" antminer_s19j_defconfig
 # Step 4: Copy board-specific files & Linux 6.6 DTSI layout
 # --------------------------------------------------------------------------
 
-log_step "4/5" "Copying custom Device Tree & board files..."
+log_step "4/6" "Copying custom Device Tree & board files..."
 mkdir -p "${BUILDROOT_DIR}/board/bitmain/antminer-s19j"
 cp -r "${PROJECT_DIR}/board/bitmain/antminer-s19j/"* "${BUILDROOT_DIR}/board/bitmain/antminer-s19j/"
 
+# Trigger linux-extract so kernel source tree is prepared on clean builds
+echo "  Extracting Linux Kernel sources..."
+make -C "${BUILDROOT_DIR}" linux-extract
+
+# Locate extracted kernel source directory
+KERNEL_BUILD_DIR=$(find "${BUILDROOT_DIR}/output/build" -maxdepth 1 -name "linux-*" -type d 2>/dev/null | head -n 1)
+if [ -z "${KERNEL_BUILD_DIR}" ]; then
+    KERNEL_BUILD_DIR="${BUILDROOT_DIR}/output/build/linux-6.6.58"
+fi
+
 # Linux 6.6 stores TI AM335x DTS files under arch/arm/boot/dts/ti/omap/
-KERNEL_DTS_DIR="${BUILDROOT_DIR}/output/build/linux-6.6.58/arch/arm/boot/dts"
-if [ -d "${KERNEL_DTS_DIR}" ]; then
-    # Purge stale DTS/DTB from root dts folder so kernel only targets ti/omap/
-    rm -f "${KERNEL_DTS_DIR}/am335x-antminer.dts"* "${KERNEL_DTS_DIR}/am335x-antminer.dtb"*
-    mkdir -p "${KERNEL_DTS_DIR}/ti/omap"
-    cp "${PROJECT_DIR}/board/bitmain/antminer-s19j/am335x-antminer.dts" "${KERNEL_DTS_DIR}/ti/omap/am335x-antminer.dts"
+KERNEL_DTS_DIR="${KERNEL_BUILD_DIR}/arch/arm/boot/dts"
+mkdir -p "${KERNEL_DTS_DIR}/ti/omap"
+cp "${PROJECT_DIR}/board/bitmain/antminer-s19j/am335x-antminer.dts" "${KERNEL_DTS_DIR}/ti/omap/am335x-antminer.dts"
+echo "  -> Installed custom am335x-antminer.dts into ${KERNEL_DTS_DIR}/ti/omap/"
+
+# Register am335x-antminer.dtb in ti/omap/Makefile so Kbuild compiles it
+KERNEL_OMAP_MAKEFILE="${KERNEL_DTS_DIR}/ti/omap/Makefile"
+if [ -f "${KERNEL_OMAP_MAKEFILE}" ]; then
+    if ! grep -q "am335x-antminer.dtb" "${KERNEL_OMAP_MAKEFILE}"; then
+        # shellcheck disable=SC2016
+        echo 'dtb-$(CONFIG_SOC_AM33XX) += am335x-antminer.dtb' >> "${KERNEL_OMAP_MAKEFILE}"
+        echo "  -> Registered am335x-antminer.dtb in ${KERNEL_OMAP_MAKEFILE}"
+    fi
 fi
 
 # --------------------------------------------------------------------------
-# Step 5: Build
+# Step 5: Build with Buildroot
 # --------------------------------------------------------------------------
 
 NPROC=$(nproc 2>/dev/null || echo 1)
-log_step "5/5" "Building with ${NPROC} parallel jobs..."
+log_step "5/6" "Building Buildroot target with ${NPROC} parallel jobs..."
 make -C "${BUILDROOT_DIR}" -j${NPROC}
+
+# --------------------------------------------------------------------------
+# Step 6: Package Artifacts into images/ and bundle sdcard.img
+# --------------------------------------------------------------------------
+
+log_step "6/6" "Packaging Bootloader, Kernel, DTB, RootFS into sdcard.img..."
+mkdir -p "${IMAGES_DIR}"
+
+# Copy outputs from Buildroot
+cp "${BUILDROOT_DIR}/output/images/zImage" "${IMAGES_DIR}/zImage" 2>/dev/null || true
+
+if [ -f "${BUILDROOT_DIR}/output/images/am335x-antminer.dtb" ]; then
+    cp "${BUILDROOT_DIR}/output/images/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb"
+elif [ -f "${BUILDROOT_DIR}/output/images/ti/omap/am335x-antminer.dtb" ]; then
+    cp "${BUILDROOT_DIR}/output/images/ti/omap/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb"
+elif [ -n "${KERNEL_BUILD_DIR}" ] && [ -f "${KERNEL_BUILD_DIR}/arch/arm/boot/dts/ti/omap/am335x-antminer.dtb" ]; then
+    cp "${KERNEL_BUILD_DIR}/arch/arm/boot/dts/ti/omap/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb"
+fi
+
+cp "${BUILDROOT_DIR}/output/images/rootfs.ext4" "${IMAGES_DIR}/rootfs.ext4" 2>/dev/null || \
+   cp "${BUILDROOT_DIR}/output/images/rootfs.ext2" "${IMAGES_DIR}/rootfs.ext4" 2>/dev/null || true
+
+# Validate essential build outputs
+if [ ! -f "${IMAGES_DIR}/zImage" ]; then
+    echo "ERROR: Kernel zImage not found in ${BUILDROOT_DIR}/output/images/!"
+    exit 1
+fi
+
+if [ ! -f "${IMAGES_DIR}/am335x-antminer.dtb" ]; then
+    echo "ERROR: am335x-antminer.dtb not found!"
+    exit 1
+fi
+
+# Build 64MB FAT32 boot partition (boot.vfat)
+VFAT_IMG="${IMAGES_DIR}/boot.vfat"
+rm -f "${VFAT_IMG}"
+dd if=/dev/zero of="${VFAT_IMG}" bs=1M count=64 status=none
+mkfs.fat -F 32 -n 'BOOT' "${VFAT_IMG}" >/dev/null
+mmd -i "${VFAT_IMG}" ::/boot 2>/dev/null || true
+
+# Copy uEnv.txt from board config if missing in images
+if [ ! -f "${IMAGES_DIR}/uEnv.txt" ]; then
+    cp "${PROJECT_DIR}/board/bitmain/antminer-s19j/uEnv.txt" "${IMAGES_DIR}/uEnv.txt"
+fi
+
+[ -f "${IMAGES_DIR}/zImage" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/zImage" ::/zImage
+[ -f "${IMAGES_DIR}/uImage" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/uImage" ::/uImage
+[ -f "${IMAGES_DIR}/uImage" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/uImage" ::/boot/uImage
+[ -f "${IMAGES_DIR}/boot.scr" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/boot.scr" ::/boot.scr
+[ -f "${IMAGES_DIR}/uEnv.txt" ] && mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/uEnv.txt" ::/uEnv.txt
+
+if [ -f "${IMAGES_DIR}/am335x-antminer.dtb" ]; then
+    mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/am335x-antminer.dtb" ::/am335x-boneblack.dtb
+    mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/am335x-antminer.dtb" ::/boot/am335x-boneblack.dtb
+    mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/am335x-antminer.dtb" ::/am335x.dtb
+    mcopy -o -i "${VFAT_IMG}" "${IMAGES_DIR}/am335x-antminer.dtb" ::/antminer.dtb
+fi
+
+# Bundle sdcard.img
+python3 "${PROJECT_DIR}/scripts/make_sdcard_img.py"
 
 # --------------------------------------------------------------------------
 # Done
@@ -172,14 +254,13 @@ echo " BUILD SUCCESSFUL!"
 echo "=========================================================="
 echo " Ubuntu ${UBUNTU_VER} / GCC ${GCC_VER}"
 echo ""
-echo " Output: ${BUILDROOT_DIR}/output/images/"
+echo " Output Artifacts: ${IMAGES_DIR}/"
+echo "   - sdcard.img            (Complete Flashable Disk Image)"
 echo "   - zImage                (Linux 6.6.58 Kernel)"
-echo "   - am335x-antminer.dtb  (Custom Device Tree)"
+echo "   - am335x-antminer.dtb  (Custom Device Tree Blob)"
 echo "   - rootfs.ext4           (Root Filesystem)"
+echo "   - boot.vfat             (FAT32 Boot Partition)"
 echo ""
-echo " Next steps:"
-echo "   1. Format SD card: Partition 1 = FAT32, Partition 2 = EXT4"
-echo "   2. Copy zImage + am335x-antminer.dtb + uEnv.txt -> FAT32"
-echo "   3. Extract rootfs -> EXT4"
-echo "   4. Insert SD card into Antminer S19J and power on!"
+echo " Flash to SD card with BalenaEtcher, Rufus, or dd:"
+echo "   sudo dd if=${IMAGES_DIR}/sdcard.img of=/dev/sdX bs=4M status=progress conv=fsync"
 echo "=========================================================="

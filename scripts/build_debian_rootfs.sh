@@ -168,6 +168,11 @@ dd if=/dev/zero of="${VFAT_IMG}" bs=1M count=64
 mkfs.fat -F 32 -n 'BOOT' "${VFAT_IMG}"
 mmd -i "${VFAT_IMG}" ::/boot 2>/dev/null || true
 
+# Flatten nested images/ directory if download-artifact unpacked into a subfolder
+if [ -d "${IMAGES_DIR}/images" ]; then
+    cp -rn "${IMAGES_DIR}/images/"* "${IMAGES_DIR}/" 2>/dev/null || true
+fi
+
 # Copy uEnv.txt from board config if missing in images
 if [ ! -f "${IMAGES_DIR}/uEnv.txt" ]; then
     cp "${PROJECT_DIR}/board/bitmain/antminer-s19j/uEnv.txt" "${IMAGES_DIR}/uEnv.txt"
@@ -189,6 +194,16 @@ fi
 # Step 8: Update sdcard.img with Partition 1 (FAT32) & Partition 2 (EXT4)
 echo ">>> [7/7] Bundling sdcard.img..."
 python3 "${SCRIPT_DIR}/make_sdcard_img.py"
+
+if [ ! -f "${IMAGES_DIR}/sdcard.img" ]; then
+    echo "ERROR: sdcard.img was not generated!"
+    exit 1
+fi
+
+# Restore ownership to host user when run under sudo
+if [ -n "${SUDO_USER}" ]; then
+    chown -R "${SUDO_USER}:${SUDO_USER}" "${IMAGES_DIR}" "${BUILD_DIR}" 2>/dev/null || true
+fi
 
 echo ""
 echo "=========================================================="
