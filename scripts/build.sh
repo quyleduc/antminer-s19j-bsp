@@ -170,6 +170,7 @@ echo "  -> Installed custom am335x-antminer.dts into ${KERNEL_DTS_DIR}/ti/omap/"
 KERNEL_OMAP_MAKEFILE="${KERNEL_DTS_DIR}/ti/omap/Makefile"
 if [ -f "${KERNEL_OMAP_MAKEFILE}" ]; then
     if ! grep -q "am335x-antminer.dtb" "${KERNEL_OMAP_MAKEFILE}"; then
+        # shellcheck disable=SC2016
         echo 'dtb-$(CONFIG_SOC_AM33XX) += am335x-antminer.dtb' >> "${KERNEL_OMAP_MAKEFILE}"
         echo "  -> Registered am335x-antminer.dtb in ${KERNEL_OMAP_MAKEFILE}"
     fi
