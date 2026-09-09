@@ -97,6 +97,10 @@ else
     log_step "1/6" "Buildroot already extracted, skipping download."
 fi
 
+# Link download directory to persist Buildroot package cache across builds
+mkdir -p "${PROJECT_DIR}/dl"
+ln -sfn "${PROJECT_DIR}/dl" "${BUILDROOT_DIR}/dl"
+
 cd "${BUILDROOT_DIR}"
 
 # --------------------------------------------------------------------------
@@ -150,11 +154,26 @@ cp -r "${PROJECT_DIR}/board/bitmain/antminer-s19j/"* "${BUILDROOT_DIR}/board/bit
 echo "  Extracting Linux Kernel sources..."
 make -C "${BUILDROOT_DIR}" linux-extract
 
+# Locate extracted kernel source directory
+KERNEL_BUILD_DIR=$(find "${BUILDROOT_DIR}/output/build" -maxdepth 1 -name "linux-*" -type d 2>/dev/null | head -n 1)
+if [ -z "${KERNEL_BUILD_DIR}" ]; then
+    KERNEL_BUILD_DIR="${BUILDROOT_DIR}/output/build/linux-6.6.58"
+fi
+
 # Linux 6.6 stores TI AM335x DTS files under arch/arm/boot/dts/ti/omap/
-KERNEL_DTS_DIR="${BUILDROOT_DIR}/output/build/linux-6.6.58/arch/arm/boot/dts"
+KERNEL_DTS_DIR="${KERNEL_BUILD_DIR}/arch/arm/boot/dts"
 mkdir -p "${KERNEL_DTS_DIR}/ti/omap"
 cp "${PROJECT_DIR}/board/bitmain/antminer-s19j/am335x-antminer.dts" "${KERNEL_DTS_DIR}/ti/omap/am335x-antminer.dts"
-echo "  -> Installed custom am335x-antminer.dts into kernel arch/arm/boot/dts/ti/omap/"
+echo "  -> Installed custom am335x-antminer.dts into ${KERNEL_DTS_DIR}/ti/omap/"
+
+# Register am335x-antminer.dtb in ti/omap/Makefile so Kbuild compiles it
+KERNEL_OMAP_MAKEFILE="${KERNEL_DTS_DIR}/ti/omap/Makefile"
+if [ -f "${KERNEL_OMAP_MAKEFILE}" ]; then
+    if ! grep -q "am335x-antminer.dtb" "${KERNEL_OMAP_MAKEFILE}"; then
+        echo 'dtb-$(CONFIG_SOC_AM33XX) += am335x-antminer.dtb' >> "${KERNEL_OMAP_MAKEFILE}"
+        echo "  -> Registered am335x-antminer.dtb in ${KERNEL_OMAP_MAKEFILE}"
+    fi
+fi
 
 # --------------------------------------------------------------------------
 # Step 5: Build with Buildroot
@@ -178,10 +197,23 @@ if [ -f "${BUILDROOT_DIR}/output/images/am335x-antminer.dtb" ]; then
     cp "${BUILDROOT_DIR}/output/images/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb"
 elif [ -f "${BUILDROOT_DIR}/output/images/ti/omap/am335x-antminer.dtb" ]; then
     cp "${BUILDROOT_DIR}/output/images/ti/omap/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb"
+elif [ -n "${KERNEL_BUILD_DIR}" ] && [ -f "${KERNEL_BUILD_DIR}/arch/arm/boot/dts/ti/omap/am335x-antminer.dtb" ]; then
+    cp "${KERNEL_BUILD_DIR}/arch/arm/boot/dts/ti/omap/am335x-antminer.dtb" "${IMAGES_DIR}/am335x-antminer.dtb"
 fi
 
 cp "${BUILDROOT_DIR}/output/images/rootfs.ext4" "${IMAGES_DIR}/rootfs.ext4" 2>/dev/null || \
    cp "${BUILDROOT_DIR}/output/images/rootfs.ext2" "${IMAGES_DIR}/rootfs.ext4" 2>/dev/null || true
+
+# Validate essential build outputs
+if [ ! -f "${IMAGES_DIR}/zImage" ]; then
+    echo "ERROR: Kernel zImage not found in ${BUILDROOT_DIR}/output/images/!"
+    exit 1
+fi
+
+if [ ! -f "${IMAGES_DIR}/am335x-antminer.dtb" ]; then
+    echo "ERROR: am335x-antminer.dtb not found!"
+    exit 1
+fi
 
 # Build 64MB FAT32 boot partition (boot.vfat)
 VFAT_IMG="${IMAGES_DIR}/boot.vfat"

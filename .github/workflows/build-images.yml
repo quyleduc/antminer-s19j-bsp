@@ -77,7 +77,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             build-essential libssl-dev wget git bc cpio rsync \
-            unzip libncurses-dev python3 mtools dosfstools xz-utils
+            unzip libncurses-dev python3 mtools dosfstools xz-utils \
+            bison flex libelf-dev
 
       - name: Cache Buildroot Downloads (dl/ folder)
         uses: actions/cache@v4
