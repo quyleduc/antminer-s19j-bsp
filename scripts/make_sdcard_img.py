@@ -6,6 +6,7 @@ Uses absolute path resolution derived from script location.
 """
 
 import os
+import sys
 import struct
 import shutil
 
@@ -52,7 +53,7 @@ def main():
 
     if not os.path.exists(ext4_path):
         print(f"Error: {ext4_path} not found.")
-        return
+        sys.exit(1)
 
     ext4_size = os.path.getsize(ext4_path)
     ext4_sectors = (ext4_size + 511) // 512

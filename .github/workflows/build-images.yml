@@ -96,7 +96,7 @@ jobs:
       - name: Compress Buildroot SD Card Image
         run: |
           cd images
-          xz -T0 -9 -k sdcard.img
+          xz -T0 -6 -k sdcard.img
           mv sdcard.img.xz antminer-s19j-buildroot-sdcard.img.xz
           sha256sum antminer-s19j-buildroot-sdcard.img.xz zImage am335x-antminer.dtb > SHA256SUMS-buildroot.txt
           cat SHA256SUMS-buildroot.txt
@@ -154,7 +154,8 @@ jobs:
       - name: Compress Debian 12 SD Card Image
         run: |
           cd images
-          xz -T0 -9 -k sdcard.img
+          sudo chown -R $(id -u):$(id -g) .
+          xz -T0 -6 -k sdcard.img
           mv sdcard.img.xz antminer-s19j-debian12-sdcard.img.xz
           sha256sum antminer-s19j-debian12-sdcard.img.xz > SHA256SUMS-debian12.txt
           cat SHA256SUMS-debian12.txt
