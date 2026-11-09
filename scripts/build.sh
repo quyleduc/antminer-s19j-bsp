@@ -9,7 +9,7 @@ if [[ "$ROOT" == /mnt/[a-zA-Z]/* ]]; then
   echo "Build under WSL Linux filesystem, not /mnt/<drive>." >&2; exit 1
 fi
 for cmd in gcc make wget tar python3 rsync; do command -v "$cmd" >/dev/null || { echo "Missing $cmd" >&2; exit 1; }; done
-"$ROOT/scripts/validate.sh"
+bash "$ROOT/scripts/validate.sh"
 if [[ ! -d "$BR" ]]; then
   archive="$ROOT/buildroot-$VERSION.tar.gz"
   wget -O "$archive.part" "https://buildroot.org/downloads/buildroot-$VERSION.tar.gz"
@@ -31,5 +31,5 @@ if ! grep -Eq '^[[:space:]]*dtb-.*am335x-antminer\.dtb' "$MAKEFILE"; then
 fi
 # Keep stock U-Boot/NAND untouched. Buildroot only builds Linux and rootfs.
 make -C "$BR" -j"${JOBS:-$(nproc)}"
-"$ROOT/scripts/package-image.sh"
+bash "$ROOT/scripts/package-image.sh"
 echo "Image: $BR/output/images/sdcard.img"
