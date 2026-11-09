@@ -5,7 +5,7 @@
 
 /dts-v1/;
 
-#include "ti/omap/am335x-boneblack.dts"
+#include "am335x-boneblack.dts"
 
 / {
 	model = "Antminer S19J Control Board v2.5";

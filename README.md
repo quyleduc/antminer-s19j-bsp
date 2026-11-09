@@ -1,81 +1,37 @@
-# Antminer S19J Control Board v2.5 (AM335x) — Buildroot BSP & Linux 6.6 Port
+# Antminer S19J v2.5 — Buildroot Linux BSP
 
-Full Board Support Package (BSP) and comprehensive documentation for porting modern **Linux Kernel 6.6.58** and **Buildroot 2025.02** to the **Antminer S19J Control Board v2.5** (TI AM335x) via SD Card — leaving the original NAND Flash, SPL, and stock U-Boot 2013.04 untouched and completely safe.
+Experimental, non-destructive SD-boot BSP for TI AM335x. Based on Buildroot 2025.02 and Linux 6.6.58. **Not a BeagleBone Black hardware-compatible board.**
 
----
+## Status
+- Original NAND bootloader remains untouched by the scripts.
+- Custom DTS retains PRU-ICSS disabled to avoid a previously observed external abort.
+- UART0 DMA is disabled in DTS for reliable serial input.
+- SD image packaging is implemented, but **a clean build and hardware boot have not been verified on this branch**.
+- Do not enable unverified BBB peripherals or overwrite NAND.
 
-## 📁 Repository Structure
-
-```text
-antminer-s19j-bsp/
-├── README.md                           # Main Documentation
-├── .gitignore                          # Git ignore rules for build artifacts
-├── board/
-│   └── bitmain/
-│       └── antminer-s19j/
-│           ├── am335x-antminer.dts     # Custom Device Tree (PRUSS/LCDC disabled, UART0 PIO)
-│           ├── uEnv.txt                # U-Boot Auto-boot file for SD Card
-│           └── boot.cmd                # U-Boot boot script source
-├── configs/
-│   └── antminer_s19j_defconfig        # Buildroot Defconfig (Linux 6.6 + Dropbear SSH)
-├── docs/
-│   └── porting_guide.md                # Comprehensive BSP Porting Guide & Troubleshooting
-└── scripts/
-    └── build.sh                        # One-click build script for Ubuntu / WSL
+## Build (Ubuntu / WSL Linux filesystem)
+```bash
+git clone https://github.com/quyleduc/antminer-s19j-bsp.git
+cd antminer-s19j-bsp
+bash scripts/validate.sh
+bash scripts/build.sh
 ```
 
----
+Output is expected at `buildroot-2025.02/output/images/sdcard.img` after a successful build. Requires standard Buildroot dependencies including make, gcc, g++, bc, cpio, rsync, unzip, Python, OpenSSL headers, ncurses, wget and tar. A new build can take significant time and disk space.
 
-## 🚀 Quick Start (Building on Ubuntu / WSL)
+The script preserves an existing Buildroot `.config`. Set `RESET_CONFIG=1` to regenerate from the tracked defconfig. Use `JOBS=4` to limit parallel jobs. Host GCC compatibility is **not guaranteed** on all distributions; the former global Makefile patch has been removed.
 
-1. Clone this repository:
-   ```bash
-   git clone <repo_url> antminer-s19j-bsp
-   cd antminer-s19j-bsp
-   chmod +x scripts/build.sh
-   ./scripts/build.sh
-   ```
+## SD boot and recovery
+1. Connect 3.3 V TTL UART0, 115200 8N1, and capture the stock boot log.
+2. Back up existing NAND/boot environment before experimentation; never run `nand erase`, `nand write`, `saveenv` or `flash_erase` without a tested recovery plan.
+3. Confirm that stock U-Boot reads FAT partition 1 from `mmc 0:1`. The `uEnv.txt` file uses `bootz` and assumes root filesystem `/dev/mmcblk0p2`; these assumptions require hardware verification.
+4. Write the image to a removable SD card **only after confirming the device path**. A mistaken `dd` destination destroys host data.
+5. If boot fails, remove SD card and inspect the UART log. The scripts do not flash NAND.
 
-2. Flashing to SD Card using `sdcard.img` (BalenaEtcher / Rufus / `dd`):
-   ```bash
-   # Flash sdcard.img directly to your SD card device (e.g. /dev/sdX)
-   sudo dd if=images/sdcard.img of=/dev/sdX bs=4M status=progress conv=fsync
-   ```
+## Security
+This is an experimental development image. Do not expose Dropbear to untrusted networks until root authentication and SSH host keys have been provisioned. Do not rely on any documented historical `root/root` credentials. A root password/console policy must be explicitly configured and verified on hardware before network deployment.
 
----
-
-## 🔑 Login & Access Credentials
-
-| Service | Access Details |
-|---------|----------------|
-| **Serial Console** | UART0 (115200 8N1), direct root shell on `ttyS0` |
-| **SSH Server** | `ssh root@<BOARD_IP>` (Port 22, Dropbear) |
-| **Root Password** | `root` |
-| **Network** | Automatic DHCP on `eth0` |
-
----
-
-## 🔑 Key Engineering Discoveries & Solutions
-
-1. **PRU-ICSS External Abort Panic (0x4a326000):**
-   - Disabling `&pruss` **and** interconnect target module `&pruss_tm` in `am335x-antminer.dts` prevents `ti-sysc` from probing unclocked PRU hardware.
-
-2. **UART0 DMA vs Terminal Unresponsiveness:**
-   - Removing `dmas` and `dma-names` from `&uart0` in DTS forces PIO mode (interrupt-driven), immediately delivering single keypresses from PuTTY / terminal without trapping data in eDMA buffers.
-
-3. **Serial Naming (Linux 6.6):**
-   - AM335x UART0 is exposed as `/dev/ttyS0` (8250_omap driver). A runtime device node `/dev/ttyO0` is created in `/etc/init.d/rcS` for backward compatibility.
-
-4. **Dropbear SSH & Auto-DHCP:**
-   - Pre-configured Dropbear SSH daemon and background DHCP client on `eth0`.
-
----
-
-## 📜 Full Porting Documentation
-
-For complete technical details, step-by-step problem resolutions, and boot sequence analysis, read [`docs/porting_guide.md`](docs/porting_guide.md).
-
----
-
-## 📜 License
-MIT License / GPLv2.
+## Engineering references
+- [Porting guide](docs/porting_guide.md) — historical observations; some image details may be outdated.
+- [Enhancement audit](docs/enhancement-audit.md) — remaining verification gates.
+- [Hardware validation](docs/hardware-validation.md) — serial, boot, Ethernet and peripheral acceptance criteria.
