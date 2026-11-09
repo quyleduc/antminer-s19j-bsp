@@ -1,0 +1,20 @@
+name: BSP static checks
+on:
+  push:
+  pull_request:
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: |
+          bash -n scripts/build.sh
+          bash -n scripts/package-image.sh
+          bash -n scripts/validate.sh
+      - name: Verify BSP consistency
+        run: bash scripts/validate.sh
+      - name: Verify image packaging configuration
+        run: |
+          grep -q 'image sdcard.img' board/bitmain/antminer-s19j/genimage.cfg
+          grep -q 'am335x-boneblack.dtb' board/bitmain/antminer-s19j/genimage.cfg
